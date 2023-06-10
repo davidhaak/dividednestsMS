@@ -1,0 +1,190 @@
+---
+title: "Fish gut CO1 processing"
+output: html_notebook
+author: David Haak
+---
+
+```{r}
+library(dada2)
+library(phyloseq)
+library(DESeq2)
+library(ggplot2)
+library(ape)
+library(plyr)
+library(dplyr)
+library(microeco)
+library(gridExtra)
+library(file2meco)
+library(ggh4x)
+library(ggdendro)
+library(ggpubr)
+library(reshape2)
+library(RColorBrewer)
+library(tidyverse)
+```
+
+```{r}
+path <- "/Users/dhaak/Google Drive/My Drive/Projects/Maddie/maddie_data/Data/gsc-pickup.flsi.vt.edu/Hallerman_April2023/"
+list.files(path)
+fnFs <- sort(list.files(path, pattern="_R1_001.fastq", full.names = TRUE))
+fnRs <- sort(list.files(path, pattern="_R2_001.fastq", full.names = TRUE))
+plotQualityProfile(fnFs[1])
+plotQualityProfile(fnRs[1])
+```
+
+
+```{r}
+sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 2)
+filtFs <- file.path(path, "filtered", paste0(sample.names, "_R1_001.fastq.gz"))
+filtRs <- file.path(path, "filtered", paste0(sample.names, "_R2_001.fastq.gz"))
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE, compress=TRUE, multithread=TRUE)
+out
+```
+
+
+```{r}
+errF <- learnErrors(filtFs, multithread=TRUE)
+errR <- learnErrors(filtRs, multithread=TRUE)
+
+plotErrors(errF, nominalQ=TRUE)
+plotErrors(errR, nominalQ=TRUE)
+
+```
+
+
+```{r}
+dadaFs <- dada(filtFs, err=errF, multithread=TRUE)
+dadaRs <- dada(filtRs, err=errR, multithread=TRUE)
+dadaFs
+mergers <- mergePairs(dadaFs, filtFs, dadaRs, filtRs, verbose=TRUE)
+seqtab <- makeSequenceTable(mergers)
+dim(seqtab)
+table(nchar(getSequences(seqtab)))
+seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=TRUE, verbose=TRUE)
+dim(seqtab.nochim)
+sum(seqtab.nochim)/sum(seqtab)
+```
+
+#Generate an ASV table
+```{r}
+seqtab <- makeSequenceTable(mergers)
+dim(seqtab)
+table(nchar(getSequences(seqtab)))
+seqtab <- seqtab[,nchar(colnames(seqtab)) %in% 237]
+seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=TRUE, verbose=TRUE)
+dim(seqtab.nochim)
+sum(seqtab.nochim)/sum(seqtab)
+```
+
+```{r}
+getN <- function(x) sum(getUniques(x))
+track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, getN), rowSums(seqtab.nochim))
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track) <- sample.names
+head(track)
+
+```
+
+```{r}
+
+saveRDS(seqtab.nochim, "/Users/dhaak/Google Drive/My Drive/Projects/Maddie/maddie_data/Data/seqtab.nochim.rds")
+saveRDS(sample.names, "/Users/dhaak/Google Drive/My Drive/Projects/Maddie/maddie_data/Data/sample.names.rds")
+
+```
+
+
+#Read in files
+```{r} 
+seqtab.nochim2<-readRDS("/Users/dhaak/Google Drive/My Drive/Projects/Maddie/maddie_data/Data/seqtab.nochim.rds")
+sample.names2<-readRDS("/Users/dhaak/Google Drive/My Drive/Projects/Maddie/maddie_data/Data/sample.names.rds")
+
+
+
+maddie_ps<-phyloseq(otu_table(seqtab.nochim2, taxa_are_rows=FALSE))
+sample_names(maddie_ps) <- sample.names2
+
+```
+
+
+#Rename the ASVs to make interpretation easier.
+```{R}
+new.names<-paste0("ASV", seq(ntaxa(maddie_ps)))
+seqs<-taxa_names(maddie_ps)
+names(seqs)<-new.names
+taxa_names(maddie_ps)<-new.names
+write.dna(seqs, "/Users/dhaak/Google Drive/My Drive/Projects/Maddie/maddie_data/Data/maddie_asv_seqs.fasta", format = "fasta", colw = 250)
+
+```
+
+```{r}
+asvs<-otu_table(maddie_ps)
+asvs_long<-psmelt(asvs)
+#write.csv(asvs_long, "/Users/dhaak/Google Drive/My Drive/Projects/Maddie/maddie_data/Data/maddie_ASVtabLong.csv")
+```
+
+```{r}
+rel_abund <- t(apply(asvs, 1, function(x) x / sum(x)))
+rel_abundLong <- melt(rel_abund) %>% 
+  rename(Sample = Var1, OTU = Var2, RA = value)
+
+asvannotLong <- read.csv("/Users/dhaak/Google Drive/My Drive/Projects/Maddie/maddie_data/Data/maddie_ASVtab.csv")
+
+asvratabLong <- asvannotLong %>% inner_join(rel_abundLong, by = join_by(OTU,Sample))
+View(asvratabLong)
+
+```
+
+#define # of colors for plotting by Genus
+```{r}
+colourCount<- length(unique(asvratabLong$Genus))
+getPalette<- colorRampPalette(brewer.pal(12, "Paired"))
+scale_fill_manual(values = getPalette(colourCount))
+```
+
+#Genus level plot
+```{r}
+ra_sample_genus<-ggplot(asvratabLong, aes(x = Common, y = Abundance, fill = Genus)) + 
+  geom_bar(stat = "identity", position = "fill") +
+  facet_wrap(~Gender) +
+  scale_fill_manual(values = getPalette(colourCount)) +
+  theme_bw(16) +
+  theme(axis.title.x=element_blank(),
+        panel.border=element_rect(colour = "black", fill=NA))+
+  ylab("Relative Abundance")+
+  theme(axis.text=element_text(size=20),
+        axis.title=element_text(size=26)) +
+  theme(text = element_text(family = "Times New Roman"))
+ra_sample_genus
+
+ggsave("/Users/dhaak/Google Drive/My Drive/Projects/Maddie/maddie_data/Figures/RAplot.png", plot = ra_sample_genus, device = 'png', dpi = 300)
+```
+
+#Just Nocomis 
+```{r}
+BHC <- asvratabLong %>% 
+  filter(Common == "BHC")  %>% 
+  filter(Genus != "Nocomis") 
+SR <- asvratabLong %>% 
+  filter(Common == "SR")  %>% 
+  filter(Genus != "Campostoma") 
+MRBD <- asvratabLong %>% 
+  filter(Common == "MRBD")  %>% 
+  filter(Genus != "Chrosomus")
+
+noSelfPlot <- ggplot() +
+  geom_bar(data = BHC, aes(Common, Abundance, fill = Genus), stat = "identity") +
+  geom_bar(data = SR, aes(Common, Abundance, fill = Genus), stat = "identity") +
+  geom_bar(data = MRBD, aes(Common, Abundance, fill = Genus), stat = "identity") +
+  facet_wrap(~Gender) +
+  scale_fill_manual(values = getPalette(colourCount)) +
+  theme_bw(16) +
+  theme(axis.title.x=element_blank(),
+        panel.border=element_rect(colour = "black", fill=NA)) +
+  ylab("Raw abundance (ASV counts)") +
+  theme(axis.text=element_text(size=16),
+        axis.title=element_text(size=20)) +
+  theme(text = element_text(family = "Times New Roman"))
+
+ggsave("/Users/dhaak/Google Drive/My Drive/Projects/Maddie/maddie_data/Figures/noSelfPlot.png", plot = noSelfPlot, device = 'png', dpi = 300)
+```
+
