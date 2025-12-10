@@ -24,6 +24,12 @@ library(tidyverse)
 ```
 
 ```{r}
+data_dir<-file.path("~/OneDrive - Virginia Tech/Projects-David’s MacBook Air/Maddie/maddie_data/Data/")
+figs_dir<-file.path("~/OneDrive - Virginia Tech/Projects-David’s MacBook Air/Maddie/maddie_data/Figures/")
+```
+
+
+```{r}
 path <- "/Users/dhaak/Google Drive/My Drive/Projects/Maddie/maddie_data/Data/gsc-pickup.flsi.vt.edu/Hallerman_April2023/"
 list.files(path)
 fnFs <- sort(list.files(path, pattern="_R1_001.fastq", full.names = TRUE))
@@ -95,8 +101,8 @@ saveRDS(sample.names, "/Users/dhaak/Google Drive/My Drive/Projects/Maddie/maddie
 
 #Read in files
 ```{r} 
-seqtab.nochim2<-readRDS("/Users/dhaak/Google Drive/My Drive/Projects/Maddie/maddie_data/Data/seqtab.nochim.rds")
-sample.names2<-readRDS("/Users/dhaak/Google Drive/My Drive/Projects/Maddie/maddie_data/Data/sample.names.rds")
+seqtab.nochim2<-readRDS(file.path(data_dir, "seqtab.nochim.rds"))
+sample.names2<-readRDS(file.path(data_dir, "sample.names.rds"))
 
 
 
@@ -127,7 +133,7 @@ rel_abund <- t(apply(asvs, 1, function(x) x / sum(x)))
 rel_abundLong <- melt(rel_abund) %>% 
   rename(Sample = Var1, OTU = Var2, RA = value)
 
-asvannotLong <- read.csv("/Users/dhaak/Google Drive/My Drive/Projects/Maddie/maddie_data/Data/maddie_ASVtab.csv")
+asvannotLong <- read.csv(file.path(data_dir, "maddie_ASVtab.csv"))
 
 asvratabLong <- asvannotLong %>% inner_join(rel_abundLong, by = join_by(OTU,Sample))
 View(asvratabLong)
@@ -185,6 +191,30 @@ noSelfPlot <- ggplot() +
         axis.title=element_text(size=20)) +
   theme(text = element_text(family = "Times New Roman"))
 
-ggsave("/Users/dhaak/Google Drive/My Drive/Projects/Maddie/maddie_data/Figures/noSelfPlot.png", plot = noSelfPlot, device = 'png', dpi = 300)
+ggsave(file.path(figs_dir, "noSelfPlot.png"), plot = noSelfPlot, device = 'png', dpi = 300)
 ```
+
+```{r}
+
+test.enriched <- bind_rows(BHC,SR,MRBD) %>% 
+  group_by(Genus, Gender) %>% 
+  summarise(observed = sum(Abundance))
+female.test <- test.enriched %>% 
+  filter(Gender == "F") 
+male.test <- test.enriched %>% 
+  filter(Gender == "M") 
+
+x <- female.test$observed 
+y <- male.test$observed
+z <- as.table(rbind(x,y))
+dimnames(z) <- list(gender = c("F", "M"),
+                    Genus = c("Compostoma","Chrosomus", "Clinostomus", "Luxilus", "Nocomis", "insect"))
+
+chisq.test(z)
+
+
+
+```
+
+
 
